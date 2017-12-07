@@ -1,0 +1,151 @@
+---
+title: "Correlation of Pool of Projects"
+author: "Vinod Kumar Ahuja"
+date: "December 6, 2017"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+## Explanation
+
+In this correlation analysis I have taken the pool of 5 projects ("rust","aframe","kubernetes","containerd","rkt") and have taken their data of the following 10 variables ("ProjectDays","TotalCommits","DistinctCommitters",
+"TotalClosedIssues", "PullRequestDuration", "PullRequestCommentDuration" ,"CommitsDuration", "IssueCommentsDuration","ClosedIssues"). 
+
+On the basis of this, I have run the correlation on these five projects. Going forward the goal is to interact with a database of all the different variables, run the correlation on the pool of different projects, and cross-compare that correlation among various pools.
+
+
+```{r warning=FALSE, message = FALSE, echo=FALSE, error=FALSE, tidy=TRUE}
+# Loading Libraries
+library(RODBC) # for database connection
+library(sqldf) # for sql query
+library(tidyverse) # for joins
+library(ggpubr) # for correlation plotting
+library(PerformanceAnalytics) # for correlation plotting
+library(corrplot) # for corrplot
+library(GGally) # for ggcorr
+library(plyr)
+
+# Forming Correlation Table
+correlation_table<- data.frame(
+  "ProjectName" = character(),
+  "ProjectDays" =numeric(),
+  "TotalCommits" =numeric(),
+  "DistinctCommitters" =numeric(),
+  "TotalClosedIssues" =numeric(),
+  "PullRequestDuration" =numeric() ,
+  "PullRequestCommentDuration" =numeric(), 
+  "CommitsDuration" =numeric(),
+#  "CommitsCommentsDuration" =numeric(),
+  "IssueCommentsDuration" =numeric(), 
+  "ClosedIssues"= numeric(), 
+  stringsAsFactors=FALSE)
+
+# Connecting to GHData MySQL database
+connect <- odbcConnect("ghtorrent")
+
+# Selecting pool of projects
+ProjectName1 <- c("rust","aframe","kubernetes","containerd","rkt")
+ProjectOwner1 <- c("rust-lang","aframevr","kubernetes","containerd","rkt")
+Project_list<-rbind(ProjectName1, ProjectOwner1)
+
+# Extracting all the relavent data for each project in the pool
+for (i in 1:5){
+  ProjectName <- paste(Project_list[1,i])
+  ProjectOwner <- paste(Project_list[2,i])
+
+  #Finding Project ID from GHTorrent data
+  project_id <- sqlQuery(connect, paste("SELECT projects.id FROM projects INNER JOIN users ON projects.owner_id = users.id WHERE projects.name ='",ProjectName,"'AND users.login = '",ProjectOwner,"';",sep = ""))
+  ProjectName<-as.character(ProjectName)
+  
+  # Age of Project in days
+  ProjectDays <- sqlQuery(connect, paste("SELECT DATEDIFF(CURDATE(),created_at) AS ProjectAge FROM projects WHERE id=" ,project_id, ";"),as.is=T)
+  ProjectDays <- as.numeric(ProjectDays)
+  
+  # pull request duration
+  query <- sqlQuery(connect, paste("select pull_request_history.actor_id, pull_request_history.created_at from pull_request_history join pull_requests on pull_requests.id = pull_request_history.pull_request_id where pull_requests.base_repo_id =" ,project_id, "group by  pull_request_history.actor_id, pull_request_history.created_at;"),as.is=T)
+  pull_req_duration<-ddply(query, .(actor_id), summarize, first_date=min(created_at), last_date=max(created_at) )
+  pull_req_duration$first_date<- as.Date(pull_req_duration$first_date, "%Y-%m-%d")
+  pull_req_duration$last_date<- as.Date(pull_req_duration$last_date, "%Y-%m-%d")
+  pull_req_duration$Duration<- difftime(pull_req_duration$last_date, pull_req_duration$first_date , units = c("days"))
+  # taking average of pull request duration
+  PullRequestDuration<-round(mean(pull_req_duration$Duration))
+  PullRequestDuration<-as.numeric(PullRequestDuration)
+  
+  # pull request comments duration
+  query <- sqlQuery(connect, paste("select pull_request_comments.user_id, pull_request_comments.created_at from pull_request_comments join pull_requests on pull_requests.id = pull_request_comments.pull_request_id where pull_requests.base_repo_id =" ,project_id, "group by  pull_request_comments.user_id, pull_request_comments.created_at;"),as.is=T)
+  pull_req_comments_duration<-ddply(query, .(user_id), summarize, first_date=min(created_at), last_date=max(created_at) )
+  pull_req_comments_duration$first_date<- as.Date(pull_req_comments_duration$first_date, "%Y-%m-%d")
+  pull_req_comments_duration$last_date<- as.Date(pull_req_comments_duration$last_date, "%Y-%m-%d")
+  pull_req_comments_duration$Duration<- difftime(pull_req_comments_duration$last_date, pull_req_comments_duration$first_date , units = c("days"))
+  #taking average of pull request comments duration
+  PullRequestCommentDuration<-round(mean(pull_req_comments_duration$Duration))
+  PullRequestCommentDuration<-as.numeric(PullRequestCommentDuration)
+  
+  # Commits Duration
+  query <- sqlQuery(connect, paste("select author_id, created_at from commits where project_id =",project_id,";"),as.is=T)
+  commits_duration<-ddply(query, .(author_id), summarize, first_date=min(created_at), last_date=max(created_at) )
+  commits_duration$first_date<- as.Date(commits_duration$first_date, "%Y-%m-%d")
+  commits_duration$last_date<- as.Date(commits_duration$last_date, "%Y-%m-%d")
+  commits_duration$Duration<- difftime(commits_duration$last_date, commits_duration$first_date , units = c("days"))
+  # taking average of commits duration
+  CommitsDuration<-round(mean(commits_duration$Duration))
+  CommitsDuration<-as.numeric(CommitsDuration)
+  
+    # Issue Comments Duration
+  query <- sqlQuery(connect, paste("select issue_comments.user_id, issue_comments.created_at from issue_comments join issues on issues.id = issue_comments.issue_id where issues.repo_id =" ,project_id, "group by  issue_comments.user_id, issue_comments.created_at;"),as.is=T)
+  issue_comments_duration<-ddply(query, .(user_id), summarize, first_date=min(created_at), last_date=max(created_at) )
+  issue_comments_duration$first_date<- as.Date(issue_comments_duration$first_date, "%Y-%m-%d")
+  issue_comments_duration$last_date<- as.Date(issue_comments_duration$last_date, "%Y-%m-%d")
+  issue_comments_duration$Duration<- difftime(issue_comments_duration$last_date, issue_comments_duration$first_date , units = c("days"))
+  # taking average of issue comments duration
+  IssueCommentsDuration<-round(mean(issue_comments_duration$Duration))
+  IssueCommentsDuration<-as.numeric(IssueCommentsDuration)
+  
+  # Selecting Total Commits
+  TotalCommits <- sqlQuery(connect, paste("select count(id) as TotalCommits from commits where project_id =",project_id,";"),as.is=T)
+  TotalCommits<-as.numeric(TotalCommits)
+  
+  # Selecting number of closed issues
+  TotalClosedIssues <- sqlQuery(connect, paste("SELECT count(issues.id) as TotalClosedIssues FROM issues JOIN issue_events ON issue_events.issue_id = issues.id WHERE issues.repo_id =", project_id, "AND issue_events.action = 'closed';"))
+  TotalClosedIssues<- as.numeric(TotalClosedIssues)
+  
+  # Count Distinct Committers
+  DistinctCommitters <- sqlQuery(connect, paste("SELECT count(distinct(author_id)) as DistinctCommitters FROM commits WHERE project_id =", project_id, ";"))
+  DistinctCommitters<- as.numeric(DistinctCommitters)
+  
+  # Selecting number of closed issues
+  ClosedIssues <- sqlQuery(connect, paste("SELECT count(issue_events.event_id) as 'ClosedIssues' FROM issue_events JOIN issues ON issue_events.issue_id = issues.id WHERE issues.repo_id =", project_id, "AND issue_events.action = 'closed';"))
+  
+  # Joining all the variables and forming correlation table
+  correlation_table[nrow(correlation_table)+1,] <- c(ProjectName, ProjectDays, TotalCommits, DistinctCommitters, TotalClosedIssues, PullRequestDuration, PullRequestCommentDuration, CommitsDuration,  IssueCommentsDuration, ClosedIssues )
+
+}
+
+# All Project data table
+print(correlation_table)
+
+# Selecting Columns for correlation table
+columns <- 2:10 
+correlation_table[columns] <- lapply(correlation_table[columns], as.numeric) 
+
+
+# Correlation Matrix
+# Pearson with missing values
+cor(correlation_table[,columns], method = "pearson")
+
+# Various Plots
+corrplot(cor(correlation_table[,columns]), type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45,  use="complete.obs", is.corr=FALSE)
+
+ggcorr(correlation_table[,columns],  label = T)
+
+ggpairs(correlation_table[,columns], 
+        upper = list(continuous = wrap("cor", 
+                                       size = 3)), 
+        lower = list(continuous = "smooth"))
+
+
+```
+
