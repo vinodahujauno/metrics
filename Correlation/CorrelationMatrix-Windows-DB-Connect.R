@@ -7,7 +7,7 @@ library(corrplot) # for corrplot
 library(GGally) # for ggcorr
 library(plyr)
 library(RColorBrewer) # for color combination in corplot
-library(bit64)
+library(bit64) # For decelaring table in integer 64 as data imported is in interger64 format
 # MariaDb Database Connection
 library(DBI)
 library(RMariaDB)
@@ -32,7 +32,8 @@ correlation_table<- data.frame(
   "IssueCommentsDuration" =integer64(), 
   "ClosedIssues"= integer64(), 
   "TotalWatchers"= integer64(), 
-  "UpstreamDependencies" = integer64(), 
+  "UpstreamDependencies" = integer64(),
+  "DownStreamDependencies"= integer64(),
   stringsAsFactors=FALSE)
 
 
@@ -114,24 +115,33 @@ for (i in 1:5){
   # Selecting total watcher
   TotalWatchers <-dbGetQuery(connect, paste("SELECT count(user_id) as 'Total Watchers' FROM watchers WHERE repo_id =", project_id, ";"))
   
-  # Selecting dependencies
+  # Selecting Upstream Dependencies
   DependenciesCount <- dbGetQuery(connectlib, paste("select Name,`Dependent Projects Count` from projects where Name ='",ProjectName,"';",sep = ""))
   UpstreamDependencies <- sum(DependenciesCount$`Dependent Projects Count`)
   
+  # Selecting DownStream Dependencies
+  DownStreamDependencies <- dbGetQuery(connectlib, paste("select sum(b.Total) from (select a.platform as platfrom, max(a.`Version ID`) as version, a.Count as Total from (select platform, `Version ID`, count(`Version ID`) as Count from dependencies where `Project Name`='",ProjectName,"' group by platform, `Version ID`) as a group by a.platform) b;",sep = ""))
+  if (is.na(DownStreamDependencies)){
+    DownStreamDependencies<-0
+  }
+  
   # Joining all the variables and forming correlation table
-  correlation_table[nrow(correlation_table)+1,] <- c(ProjectName, ProjectDays, TotalCommits, DistinctCommitters, PullRequestDuration, PullRequestAcceptedDuration, PullRequestCommentDuration, CommitsDuration,  IssueCommentsDuration, ClosedIssues, TotalWatchers, UpstreamDependencies)
+  correlation_table[nrow(correlation_table)+1,] <- c(ProjectName, ProjectDays, TotalCommits, DistinctCommitters, PullRequestDuration, PullRequestAcceptedDuration, PullRequestCommentDuration, CommitsDuration,  IssueCommentsDuration, ClosedIssues, TotalWatchers, UpstreamDependencies, DownStreamDependencies )
 }
 
 # Selecting Columns for correlation table
-columns <- 2:12 
+columns <- 2:13 
 correlation_table[columns] <- lapply(correlation_table[columns], as.numeric) 
 
 correlation_table
 
 # Correlation Matrix
-cor(correlation_table[,columns], method = "pearson")
+c<-cor(correlation_table[,columns], method = "pearson")
 
 # Plots
 corrplot(cor(correlation_table[,columns]), type = "lower", order = "hclust",  
          tl.col = "black", tl.srt = 0.1,  use="complete.obs", is.corr=FALSE, method = "number",col = brewer.pal(n = 8, name = "RdBu"))
+
+
+
 
